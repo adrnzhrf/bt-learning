@@ -45,24 +45,25 @@ The **Promo Code Screen** (also called Voucher Code Screen) is a dedicated modal
 
 ## 📁 Key Files & Their Responsibilities
 
-### 1. [promo_code_screen.dart](lib/features/order/screens/promo_code_screen.dart) *(462 lines)*
+### 1. [promo_code_screen.dart](lib/features/order/screens/promo_code_screen.dart) *(514 lines)*
 
 **Purpose:** Dedicated UI screen for voucher code validation and application
 
 **Contains:**
-- `PromoCodeScreen` - StatefulWidget that receives initial voucher code (optional)
+- `PromoCodeScreen` - StatefulWidget that receives initial voucher code, discount value, amount, and discount type
 - `_PromoCodeScreenState` - State management with local variables
 - `_applyVoucher()` - Direct HTTP API call to validate voucher
-- `_extractDiscountAmount()` - Robust discount extraction from multiple response formats
+- `_extractDiscountInfo()` - Robust discount extraction from multiple response formats with type detection
 - `_showRemoveVoucherDialog()` - Confirmation dialog to remove voucher
 - UI widgets for input, success/empty states, and illustrations
 
 **Key Responsibilities:**
-- Manages local state: `_appliedVoucher`, `_discountAmount`, `_discountValue`, `_isPromoValid`
+- Manages local state: `_appliedVoucher`, `_discountAmount`, `_discountValue`, `_discountType`, `_discountCurrency`, `_isPromoValid`
 - Validates voucher codes against API
-- Extracts discount amount from various response formats
+- Extracts discount amount and type from various response formats
+- Supports both fixed and percentage-based discounts
 - Displays success/failure states with illustrations
-- Returns applied voucher data back to parent screen
+- Returns applied voucher data including discount type back to parent screen
 - Handles voucher removal with confirmation
 
 **State Properties:**
@@ -70,8 +71,9 @@ The **Promo Code Screen** (also called Voucher Code Screen) is a dedicated modal
 late final TextEditingController _voucherController;
 String? _appliedVoucher;           // Applied voucher code
 double? _discountAmount;           // Raw discount amount (e.g., 50.0)
-String? _discountCurrency;         // Currency (RM)
+String? _discountCurrency;         // Currency (RM or empty for percentage)
 String? _discountValue;            // Formatted discount (e.g., "50.00")
+String? _discountType;             // "fixed" or "percentage"
 bool _isPromoValid;                // Is voucher valid?
 ```
 
@@ -81,24 +83,35 @@ bool _isPromoValid;                // Is voucher valid?
 // Apply/validate voucher code
 Future<void> _applyVoucher() {
   // 1. Send POST request to /api/partners/v2/promo_codes/validate
-  // 2. Parse response for discount
-  // 3. Update local state
-  // 4. Update UI with success/error
+  // 2. Parse response for discount and type
+  // 3. Extract discount info (amount + type)
+  // 4. Update local state with type-aware currency
+  // 5. Update UI with success/error and formatted discount message
+  // 6. Show SnackBar with custom styling on error
 }
 
-// Extract discount from various API response formats
-double _extractDiscountAmount(Map<String, dynamic> data) {
-  // Try: data['promo_code']['value']
+// Extract discount amount and type from various API response formats
+Map<String, dynamic> _extractDiscountInfo(Map<String, dynamic> data) {
+  // Extract discount type from:
+  //   1. data['promo_code']['value_type'] (newer format)
+  //   2. data['promo_details']['discount_type'] (fallback)
+  //   3. Default to 'fixed' if not found
+  
+  // Try: data['promo_code']['value'] → extract numeric
   // Fallback: data['promo_discount']
   // Fallback: data['discount']
   // Fallback: data['discount_amount']
   // Fallback: data['amount']
+  // Fallback: 0.0
+  
+  // Returns: {'amount': double, 'type': String}
 }
 
 // Show confirmation dialog for removing voucher
 void _showRemoveVoucherDialog() {
-  // Display BTConfirmDialog
-  // Clear local state on confirmation
+  // Display BTConfirmDialog with custom styling
+  // Clear all state on confirmation
+  // Show success message with animation
 }
 ```
 
@@ -119,7 +132,8 @@ void _showRemoveVoucherDialog() {
 {
   "code": "BATTERIUNEWFD",
   "promo_code": {
-    "value": "RM50"
+    "value": "RM50",
+    "value_type": "fixed"
   },
   "promo_discount": 50.00,
   "discount": 50.00,
@@ -133,15 +147,31 @@ void _showRemoveVoucherDialog() {
 }
 ```
 
+**Supported Discount Types:**
+- `"fixed"` - Fixed amount discount (e.g., RM50 off)
+- `"percentage"` - Percentage-based discount (e.g., 10% off)
+
+**Constructor Parameters:**
+```dart
+const PromoCodeScreen({
+  Key? key,
+  String? initialVoucherCode,      // Pre-filled voucher code
+  String? initialDiscountValue,    // Pre-filled discount (e.g., "50.00")
+  double? initialDiscountAmount,   // Pre-filled discount amount (e.g., 50.0)
+  String? initialDiscountType,     // Pre-filled type: "fixed" or "percentage"
+})
+```
+
 **Navigation:**
 - **Route**: `/order/promo-code`
 - **Arguments**: Optional initial voucher data
-- **Return**: `Map<String, dynamic>` with voucher code and discount
+- **Return**: `Map<String, dynamic>` with voucher code, discount, and type
   ```dart
   {
-    'voucherCode': String,
-    'discountValue': String,  // "50.00"
-    'discountAmount': double  // 50.0
+    'voucherCode': String,         // "BATTERIUNEWFD"
+    'discountValue': String,       // "50.00" (formatted)
+    'discountAmount': double,      // 50.0 (raw amount)
+    'discountType': String         // "fixed" or "percentage"
   }
   ```
 
@@ -287,6 +317,16 @@ String? _promoValidationError;    // Error message
 
 ## 💾 Data Models
 
+### Discount Info Return Object
+
+```dart
+// Returned by _extractDiscountInfo()
+Map<String, dynamic> {
+  'amount': double,     // Extracted numeric amount (e.g., 50.0)
+  'type': String        // "fixed" or "percentage"
+}
+```
+
 ### PromoValidationResult
 
 ```dart
@@ -347,12 +387,12 @@ class OrderCalculation {
 
 ## 🔄 Data Flow Examples
 
-### Example 1: User Applies Promo Code in PromoCodeScreen
+### Example 1: User Applies Fixed Promo Code in PromoCodeScreen
 
 ```
 User enters "BATTERIUNEWFD" in voucher input field
     ↓
-User taps "Apply" button
+User taps "Apply" button or presses Enter
     ↓
 _applyVoucher() is called
     ↓
@@ -361,23 +401,76 @@ Direct HTTP POST to /api/partners/v2/promo_codes/validate
     ↓
 API returns 200 with discount data:
   {
-    "promo_code": { "value": "RM50" },
-    "promo_discount": 50.00,
-    "discount": 50.00
+    "promo_code": {
+      "value": "RM50",
+      "value_type": "fixed"
+    },
+    "promo_discount": 50.00
   }
     ↓
-_extractDiscountAmount() extracts: 50.0
+_extractDiscountInfo() extracts:
+  - Discount type: "fixed" (from promo_code.value_type)
+  - Discount amount: 50.0 (from promo_code.value or promo_discount)
     ↓
 setState() updates local state:
   _appliedVoucher = "BATTERIUNEWFD"
   _discountAmount = 50.0
-  _discountValue = "50.00"
-  _isPromoValid = true
+  _discountValue = "50.00" (formatted)
+  _discountType = "fixed"
+  _discountCurrency = "RM" (RM for fixed, empty for percentage)
+  _isPromoValid = true (discountAmount > 0)
     ↓
 UI updates:
   ✅ Green "Remove" button appears
   ✅ Success message: "You've applied RM50.00 OFF!"
-  ✅ Success illustration displays
+  ✅ TextField disabled
+  ✅ Success illustration (Voucher.png) displays
+  ✅ "Voucher applied!" text shows
+    ↓
+User taps back button
+    ↓
+Navigator.pop(context, {
+  'voucherCode': 'BATTERIUNEWFD',
+  'discountValue': '50.00',
+  'discountAmount': 50.0,
+  'discountType': 'fixed'
+})
+    ↓
+OrderConfirmationScreen receives and validates via service
+```
+
+### Example 1b: User Applies Percentage Promo Code
+
+```
+User enters "SAVE10" in voucher input field
+    ↓
+API returns:
+  {
+    "promo_code": {
+      "value": "10",
+      "value_type": "percentage"
+    },
+    "promo_discount": 10.00
+  }
+    ↓
+_extractDiscountInfo() extracts:
+  - Discount type: "percentage" (from value_type)
+  - Discount amount: 10.0
+    ↓
+setState() updates:
+  _discountType = "percentage"
+  _discountValue = "10.00"
+  _discountCurrency = "" (empty for percentage)
+    ↓
+UI displays message: "You've applied 10% OFF!"
+  (Note: Currency RM is NOT shown for percentages)
+    ↓
+Returns: {
+  'discountType': 'percentage',
+  'discountValue': '10.00',
+  'discountAmount': 10.0
+}
+```
   ✅ "Voucher applied!" text shows
     ↓
 User taps back button
@@ -460,26 +553,31 @@ UI updates to show:
 ```
 User taps "Remove" button on applied voucher
     ↓
-_showRemoveVoucherDialog() shows confirmation
+_showRemoveVoucherDialog() shows BTConfirmDialog:
+  Title: "Do you want to remove this voucher?"
+  Buttons: [Remove Voucher] [Cancel]
     ↓
 User confirms "Remove Voucher"
     ↓
-setState() clears state:
+setState() clears all state:
   _appliedVoucher = null
   _discountAmount = null
   _discountValue = null
+  _discountType = null
   _isPromoValid = false
   _voucherController.clear()
+  _discountCurrency = null
     ↓
 UI updates:
-  ✅ Input field re-enabled
+  ✅ Input field re-enabled and cleared
   ✅ "Apply" button visible again
-  ✅ Empty state illustration displays
+  ✅ Empty state illustration displays (no_voucher.png)
   ✅ "No Voucher" message shows
+  ✅ "Oops! No voucher applied yet" description
     ↓
 User taps back button
     ↓
-Navigator.pop(context)  // No return data
+Navigator.pop(context)  // No return data (null)
     ↓
 OrderConfirmationScreen receives null
     ↓
@@ -487,6 +585,7 @@ setState() clears voucher values:
   voucherCode = null
   voucherDiscountAmount = null
   voucherDiscountValue = null
+  voucherDiscountType = null
     ↓
 _calculateOrder() recalculates without promo
     ↓
@@ -500,42 +599,64 @@ UI updates with original total (no discount)
 ### Voucher Input Section
 
 ```
-┌─────────────────────────────────────────┐
-│  [Voucher Code]    [Apply / Remove]    │
-│  (Green border, 28px radius)            │
-│                                         │
-│  You've applied RM50.00 OFF!           │
-│  (Right-aligned, grey text)             │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  [Voucher Code]    [Apply / Remove]                            │
+│  (Bateriku color border, 28px radius)                          │
+│  (TextField disabled when applied)                             │
+│                                                                 │
+│  You've applied RM50.00 OFF!                                   │
+│  or                                                             │
+│  You've applied 10% OFF!                                        │
+│  (Right-aligned, B8B8B8 color text)                            │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+**Interactive States:**
+- **Empty state**: TextField enabled, "Apply" text button visible
+- **Applied state**: TextField disabled, "Remove" text button visible (green #AEEA00)
+- **Submit action**: Can press Enter when field enabled
+- **Focus**: Auto-capitalize to uppercase while typing
 
 ### Success State
 
 ```
-┌─────────────────────────────────────────┐
-│                                         │
-│        [Voucher Illustration]           │
-│                 (200h)                  │
-│                                         │
-│        Voucher applied!                │
-│   Enjoy your discount with this voucher│
-│                                         │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│      [Voucher.png Illustration]                                │
+│           height: 200                                          │
+│      (FallBack: Gift Card Icon)                                │
+│                                                                 │
+│        Voucher applied!                                        │
+│        (fontSize: 24, bold)                                    │
+│                                                                 │
+│   Enjoy your discount with this voucher                        │
+│        (fontSize: 16, dark50)                                  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Empty State
 
 ```
-┌─────────────────────────────────────────┐
-│                                         │
-│    [No Voucher Illustration]            │
-│             (200h)                      │
-│                                         │
-│          No Voucher                    │
-│    Oops! No voucher applied yet        │
-│                                         │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│   [no_voucher.png Illustration]                                │
+│           height: 200                                          │
+│   (FallBack: Custom Person + Help Icon)                        │
+│                                                                 │
+│          No Voucher                                            │
+│        (fontSize: 24, bold)                                    │
+│                                                                 │
+│    Oops! No voucher applied yet                                │
+│        (fontSize: 16, dark50)                                  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+**Illustration Error Handling:**
+- Uses `errorBuilder` to show fallback icons if assets not found
+- Success state fallback: `Icons.card_giftcard` (100px, Bateriku color)
+- Empty state fallback: Custom layout with person icon + question marks
 
 ### Order Confirmation Integration
 
@@ -554,15 +675,21 @@ UI updates with original total (no discount)
 
 | Feature | Implementation | Notes |
 |---------|----------------|-------|
-| **Code Validation** | Direct API POST to promo_codes/validate | Returns discount amount |
+| **Code Validation** | Direct API POST to promo_codes/validate | Returns discount amount & type |
+| **Discount Type Detection** | Extracts from `promo_code.value_type` or `promo_details.discount_type` | Supports "fixed" and "percentage" |
 | **Discount Extraction** | Robust multi-format extraction | Handles 5+ response formats |
 | **State Management** | StatefulWidget with local variables | No BLoC pattern for this screen |
+| **Initial Values** | Constructor accepts pre-filled voucher data | Supports editing existing vouchers |
 | **Success/Error UI** | Different illustrations & messages | Visual feedback for user actions |
 | **Remove Confirmation** | BTConfirmDialog with custom styling | Prevents accidental removal |
-| **Currency Display** | Formatted as "RM50.00" | Consistent formatting |
-| **Integration** | Returns Map to parent screen | Parent validates via service |
+| **Currency Display** | Formatted as "RM50.00" for fixed, "10%" for percentage | Type-aware formatting |
+| **Integration** | Returns Map with discount type to parent | Parent validates via service |
 | **Service Validation** | Additional validation via order calculation | Double-checks discount amount |
-| **Input Transformation** | Auto-capitalization of code | USER INPUT → "BATTERIUNEWFD" |
+| **Input Transformation** | Auto-capitalization to uppercase | USER INPUT → "BATTERIUNEWFD" |
+| **Keyboard Submit** | Enter key triggers apply action | Improves UX |
+| **Error Handling** | Custom styled SnackBar (red #E53935, float) | Clear error messaging |
+| **Debug Logging** | Extensive logging with emoji prefixes | Helps troubleshooting |
+| **Asset Fallbacks** | Icon fallbacks if illustrations missing | App doesn't crash without assets |
 
 ---
 
@@ -572,12 +699,27 @@ UI updates with original total (no discount)
 ```dart
 if (response.statusCode == 200) {
   // Valid code - process discount
+  final discountInfo = _extractDiscountInfo(data);
+  // Update state
 } else {
-  // Invalid code - show error snackbar
+  // Invalid code - show styled error snackbar
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
-      content: Text('Invalid voucher code'),
-      backgroundColor: Colors.red,
+      content: const Text(
+        'Invalid voucher code',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      backgroundColor: const Color(0xFFE53935),  // Red
+      duration: const Duration(seconds: 3),
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.all(16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
     ),
   );
 }
@@ -589,10 +731,26 @@ try {
   // API call
 } catch (e, stackTrace) {
   // Show error snackbar with exception message
+  debugPrint('💥 [Voucher] Exception occurred: $e');
+  debugPrint('💥 [Voucher] Stack trace: $stackTrace');
+  
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
-      content: Text('Error validating voucher: $e'),
-      backgroundColor: Colors.red,
+      content: Text(
+        'Error validating voucher: $e',
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      backgroundColor: const Color(0xFFE53935),
+      duration: const Duration(seconds: 3),
+      behavior: SnackBarBehavior.floating,
+      margin: const EdgeInsets.all(16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
     ),
   );
 }
@@ -602,29 +760,71 @@ try {
 ```dart
 // Multiple fallback checks ensure we get discount from some field
 // Returns 0.0 as last resort (allows screen to proceed with no discount)
+// Discount type defaults to "fixed" if not found
+// Returns {'amount': 0.0, 'type': 'fixed'}
+```
+
+### Empty Code Submission
+```dart
+if (_voucherController.text.isEmpty) {
+  debugPrint('⚠️ [Voucher] Voucher code is empty');
+  // Silent fail - no API call made
+}
 ```
 
 ---
 
 ## 📊 Discount Extraction Logic
 
-The `_extractDiscountAmount()` method supports multiple API response formats:
+The `_extractDiscountInfo()` method supports multiple API response formats and returns both amount AND type:
 
 ```
-Priority order:
-  1. data['promo_code']['value']      → "RM50" → extract "50"
-  2. data['promo_discount']            → 50.0
-  3. data['discount']                  → 50.0
-  4. data['discount_amount']           → 50.0
-  5. data['amount']                    → 50.0
-  6. Fallback: 0.0 (no discount)
+┌─ Extract Discount Type (Priority) ──────────────────────────────┐
+│ 1. data['promo_code']['value_type']                             │
+│    └─ Modern format: returns "fixed" or "percentage"            │
+│                                                                 │
+│ 2. data['promo_details']['discount_type']                       │
+│    └─ Fallback format: returns "fixed" or "percentage"          │
+│                                                                 │
+│ 3. Default: "fixed" (if type not found)                        │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─ Extract Discount Amount (Priority) ────────────────────────────┐
+│ 1. data['promo_code']['value']                                  │
+│    └─ String like "RM50" → extract numeric "50" → 50.0         │
+│                                                                 │
+│ 2. data['promo_discount']                                       │
+│    └─ Direct numeric: 50.0                                      │
+│                                                                 │
+│ 3. data['discount']                                             │
+│    └─ Direct numeric: 50.0                                      │
+│                                                                 │
+│ 4. data['discount_amount']                                      │
+│    └─ Direct numeric: 50.0                                      │
+│                                                                 │
+│ 5. data['amount']                                               │
+│    └─ Direct numeric: 50.0                                      │
+│                                                                 │
+│ 6. Fallback: 0.0 (no discount found)                           │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**Example Extraction:**
+**Example Extraction - Fixed Discount:**
 ```dart
-final input = "RM50";
-final numericValue = input.replaceAll(RegExp(r'[^\d.]'), '');  // "50"
-final amount = double.tryParse(numericValue) ?? 0.0;           // 50.0
+final input = {"promo_code": {"value": "RM50", "value_type": "fixed"}};
+final numericValue = "RM50".replaceAll(RegExp(r'[^\d.]'), '');  // "50"
+final amount = double.tryParse(numericValue) ?? 0.0;             // 50.0
+final type = "fixed";
+return {'amount': 50.0, 'type': 'fixed'};
+```
+
+**Example Extraction - Percentage Discount:**
+```dart
+final input = {"promo_code": {"value": "10", "value_type": "percentage"}};
+final numericValue = "10".replaceAll(RegExp(r'[^\d.]'), '');    // "10"
+final amount = double.tryParse(numericValue) ?? 0.0;             // 10.0
+final type = "percentage";
+return {'amount': 10.0, 'type': 'percentage'};
 ```
 
 ---
@@ -710,15 +910,20 @@ void main() {
 ## ⚠️ Important Notes
 
 1. **Direct HTTP Calls** - PromoCodeScreen makes direct HTTP calls, not via BLoC
-2. **Local State Management** - Uses StatefulWidget for local state tracking
-3. **Response Format Flexibility** - Handles multiple discount field names
-4. **Integration Pattern** - Returns Map to parent, parent validates via service
-5. **Auto-Capitalization** - Codes automatically converted to uppercase
-6. **No Input Validation** - Any code sent to API for validation
-7. **Multiple Response Formats** - API can return discount in different formats
-8. **Graceful Fallbacks** - Falls back to 0.0 discount if extraction fails
-9. **Illustration Assets** - Uses `Voucher.png` and `no_voucher.png` images
-10. **Currency Fixed** - Always shows RM currency (hardcoded as 'RM')
+2. **Local State Management** - Uses StatefulWidget with multiple state variables
+3. **Response Format Flexibility** - Handles multiple discount field names and type formats
+4. **Discount Type Support** - Distinguishes between "fixed" (RM) and "percentage" (%) discounts
+5. **Type-Aware Currency** - Shows "RM" for fixed, empty for percentage
+6. **Integration Pattern** - Returns Map with discount type to parent, parent validates via service
+7. **Auto-Capitalization** - Codes automatically converted to uppercase during input
+8. **No Input Validation** - Any code sent to API for validation (server validates)
+9. **Graceful Fallbacks** - Falls back to 0.0 discount and "fixed" type if extraction fails
+10. **Illustration Assets** - Uses `Voucher.png` and `no_voucher.png` images with icon fallbacks
+11. **Error SnackBars** - Styled with red background (#E53935), floating, 3s duration, 12px radius
+12. **TextField Disabled When Applied** - Prevents editing after voucher applied
+13. **Enter Key Support** - Can submit code with keyboard Enter key
+14. **Extensive Logging** - All operations logged with emoji prefixes for debugging
+15. **Initial Voucher Support** - Constructor accepts pre-filled voucher data for editing scenarios
 
 ---
 
@@ -730,9 +935,10 @@ Navigator.pushNamed(
   context,
   '/order/promo-code',
   arguments: {
-    'voucherCode': voucherCode,
-    'discountValue': voucherDiscountValue,
-    'discountAmount': voucherDiscountAmount,
+    'initialVoucherCode': voucherCode,
+    'initialDiscountValue': voucherDiscountValue,
+    'initialDiscountAmount': voucherDiscountAmount,
+    'initialDiscountType': voucherDiscountType,
   },
 )
 ```
@@ -741,8 +947,16 @@ Navigator.pushNamed(
 ```dart
 .then((value) {
   if (value != null && value is Map<String, dynamic>) {
-    // Update order confirmation with voucher data
-    // Validate via service
+    setState(() {
+      voucherCode = value['voucherCode'] as String?;
+      voucherDiscountValue = value['discountValue'] as String?;
+      voucherDiscountAmount = value['discountAmount'] as double?;
+      voucherDiscountType = value['discountType'] as String?;
+    });
+    // Validate via service with discount type
+    if (voucherCode != null) {
+      _validatePromoCode(voucherCode!);
+    }
   }
 })
 ```
@@ -750,7 +964,11 @@ Navigator.pushNamed(
 ### 3. Service Validation
 ```dart
 context.read<OrderConfirmationCubit>().validatePromoCode(
-  promoCode: voucherCode,
+  latitude: locationState.latitude!,
+  longitude: locationState.longitude!,
+  productId: productIdForPromo,
+  promoCode: code,
+  tradeIn: hasTradeIn ? 1 : 0,
   discountAmount: voucherDiscountAmount,
 )
 ```
@@ -783,17 +1001,22 @@ context.read<OrderConfirmationCubit>().validatePromoCode(
 ### Strengths
 ✅ Simple, focused UI component  
 ✅ Robust discount extraction from multiple formats  
-✅ Clear return value pattern  
-✅ Graceful error handling  
+✅ Support for fixed and percentage discounts  
+✅ Clear return value pattern with discount type  
+✅ Graceful error handling with styled SnackBars  
 ✅ Visual feedback for user actions  
 ✅ Confirmation dialog for destructive actions  
+✅ Excellent debugging with emoji-prefixed logs  
+✅ Icon fallbacks for missing assets  
+✅ Type-aware currency display  
 
 ### Considerations
 ⚠️ No BLoC pattern for this screen (could be refactored)  
 ⚠️ Direct HTTP calls from UI (could use service layer)  
 ⚠️ Hardcoded API tokens in screen  
-⚠️ Hardcoded currency (RM)  
-⚠️ Asset dependencies (illustrations)  
+⚠️ Hardcoded base URL  
+⚠️ Asset dependencies (illustrations) - mitigated with icon fallbacks  
+⚠️ No validation for minimum order amount (handled by parent service)  
 
 ### Future Enhancements
 - Refactor to use BLoC pattern like other screens
