@@ -1,0 +1,293 @@
+# TestFlight Deployment Guide (Staging)
+
+This guide provides step-by-step instructions for deploying the Bateriku Customer Mobile staging app to TestFlight.
+
+## Prerequisites
+
+- **Apple Developer Account** with team membership
+- **Team ID**: `JDZG97B6AT`
+- **Bundle ID**: `com.bateriku.customer.stg`
+- **Xcode** installed and signed in with your Apple ID
+- **iOS Distribution Certificate** (required for app-store exports)
+- **App-specific password** for your Apple ID account
+- **Flutter SDK** (>=3.24.0)
+- **Ruby 3.x** (CocoaPods requires Ruby 3.x; system Ruby 2.6 is incompatible)
+- **CocoaPods** installed and working
+
+⚠️ **Important**: Ensure Ruby 3.x is installed. The system Ruby 2.6 will cause CocoaPods to fail.
+
+## Step 1: Prepare Your Machine
+
+### 1a. Set Up Ruby 3.x
+
+CocoaPods requires Ruby 3.x. If you have Homebrew installed:
+
+```bash
+brew install ruby
+```
+
+Then set up your shell environment:
+
+```bash
+# Add this to your ~/.zshrc or ~/.bashrc
+export PATH="/opt/homebrew/opt/ruby/bin:/Users/$USER/.local/share/gem/ruby/3.4.0/bin:$PATH"
+
+# Reload your shell
+source ~/.zshrc
+```
+
+### 1b. Verify Account Setup
+
+Ensure you have the iOS certificates installed:
+
+1. Open Xcode: `open /Applications/Xcode.app`
+2. Go to **Xcode → Settings → Accounts**
+3. Select your Apple ID
+4. Click **Manage Certificates**
+5. Verify you have both:
+   - ✅ Apple Development certificate
+   - ✅ Apple Distribution certificate (required for TestFlight)
+
+If the Distribution certificate is missing, download it from the [Apple Developer Portal](https://developer.apple.com/account/resources/certificates/list).
+
+## Step 2: Generate App-Specific Password
+
+TestFlight requires an app-specific password (not your regular Apple ID password):
+
+1. Go to [https://account.apple.com](https://account.apple.com)
+2. Sign in with your Apple ID
+3. Navigate to **Security** section
+4. Under "App-specific passwords", click **Generate Password**
+5. Select **"Xcode"** as the app type
+6. Copy the generated password (format: `xxxx-xxxx-xxxx-xxxx`)
+7. Store it securely - you'll need it in Step 5
+
+⚠️ **Important**: Never commit this password to version control.
+
+## Step 3: Build Flutter Release
+
+Build the Flutter app for staging flavor in release mode:
+
+```bash
+# Set up Ruby path first
+export PATH="/opt/homebrew/opt/ruby/bin:/Users/$USER/.local/share/gem/ruby/3.4.0/bin:$PATH"
+
+cd /Users/adrinzharif/Projects/customer-mobile_staging
+flutter clean
+flutter pub get
+flutter build ios --flavor stg -t lib/main_stg.dart --release
+```
+
+Expected output: `Built build/ios/iphoneos/Runner.app` (~57.7 MB)
+
+✅ **Success Indicator**: The build completes without CocoaPods errors.
+
+## Step 4: Create Xcode Archive
+
+Generate an `.xcarchive` file for distribution:
+
+```bash
+# Set up Ruby path
+export PATH="/opt/homebrew/opt/ruby/bin:/Users/$USER/.local/share/gem/ruby/3.4.0/bin:$PATH"
+
+xcodebuild -workspace ios/Runner.xcworkspace \
+  -scheme Runner \
+  -configuration Release-stg \
+  -derivedDataPath build/ios \
+  -archivePath build/ios/Bateriku-STG.xcarchive \
+  -allowProvisioningUpdates \
+  archive
+```
+
+⚠️ **Critical**: The `-allowProvisioningUpdates` flag is required to automatically sync provisioning profiles. Without it, the archive will fail with "No profiles found" error.
+
+Expected output: `** ARCHIVE SUCCEEDED **`
+
+## Step 5: Update ExportOptions.plist
+
+Update the export options to use app-store method with your team ID:
+
+```bash
+cat > ios/ExportOptions.plist << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<key>stripSwiftSymbols</key>
+	<true/>
+	<key>teamID</key>
+	<string>JDZG97B6AT</string>
+</dict>
+</plist>
+EOF
+```
+
+## Step 6: Export Archive to IPA
+
+Convert the `.xcarchive` to an IPA file suitable for TestFlight distribution:
+
+```bash
+# Set up Ruby path
+export PATH="/opt/homebrew/opt/ruby/bin:/Users/$USER/.local/share/gem/ruby/3.4.0/bin:$PATH"
+
+xcodebuild -exportArchive \
+  -archivePath build/ios/Bateriku-STG.xcarchive \
+  -exportPath build/ios/export \
+  -exportOptionsPlist ios/ExportOptions.plist \
+  -allowProvisioningUpdates
+```
+
+Expected output: `** EXPORT SUCCEEDED **`
+
+File created: `build/ios/export/Bateriku STG.ipa` (approximately 34-35 MB)
+
+## Step 7: Upload to TestFlight
+
+Submit the IPA to TestFlight using the app-specific password:
+
+```bash
+xcrun altool --upload-app \
+  --file "build/ios/export/Bateriku STG.ipa" \
+  --type ios \
+  --bundle-id com.bateriku.customer.stg \
+  --username adrin.zharif@bateriku.com \
+  --password YOUR_APP_SPECIFIC_PASSWORD
+```
+
+Replace `YOUR_APP_SPECIFIC_PASSWORD` with the password from Step 2.
+
+### Expected Success Response:
+
+```
+2026-01-XX XX:XX:XX.XXX  INFO: [ContentDelivery.Uploader.XXXXX]
+==========================================
+UPLOAD SUCCEEDED with no errors
+Delivery UUID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+Transferred 35892218 bytes in 5.683 seconds (6.3MB/s, 50.526Mbps)
+==========================================
+No errors uploading archive at 'build/ios/export/Bateriku STG.ipa'.
+```
+
+## Step 8: Monitor TestFlight Processing
+
+1. Go to [https://testflight.apple.com](https://testflight.apple.com)
+2. Sign in with your Apple ID
+3. Navigate to the **Bateriku STG** app
+4. Watch for processing status (typically 5-30 minutes)
+5. Once processed, you can invite testers via email
+
+## One-Line Deployment (Tested & Working)
+
+Deploy to TestFlight with a single command:
+
+```bash
+export PATH="/opt/homebrew/opt/ruby/bin:/Users/$USER/.local/share/gem/ruby/3.4.0/bin:$PATH" && \
+cd /Users/adrinzharif/Projects/customer-mobile_staging && \
+flutter clean && \
+flutter pub get && \
+flutter build ios --flavor stg -t lib/main_stg.dart --release && \
+xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release-stg -derivedDataPath build/ios -archivePath build/ios/Bateriku-STG.xcarchive -allowProvisioningUpdates archive && \
+xcodebuild -exportArchive -archivePath build/ios/Bateriku-STG.xcarchive -exportPath build/ios/export -exportOptionsPlist ios/ExportOptions.plist -allowProvisioningUpdates && \
+xcrun altool --upload-app --file "build/ios/export/Bateriku STG.ipa" --type ios --bundle-id com.bateriku.customer.stg --username adrin.zharif@bateriku.com --password YOUR_APP_SPECIFIC_PASSWORD
+```
+
+✅ **Tested**: This command successfully deployed on January 8, 2026.
+
+## Troubleshooting
+
+### Error: "CocoaPods is installed but broken"
+
+**Cause**: System Ruby 2.6 is incompatible with modern CocoaPods. CocoaPods requires Ruby 3.x.
+
+**Solution**:
+1. Install Ruby 3.x: `brew install ruby`
+2. Add Ruby 3.x to your PATH in `~/.zshrc` or `~/.bashrc`:
+   ```bash
+   export PATH="/opt/homebrew/opt/ruby/bin:/Users/$USER/.local/share/gem/ruby/3.4.0/bin:$PATH"
+   ```
+3. Reinstall CocoaPods: `gem install cocoapods`
+4. Reload your shell: `source ~/.zshrc`
+5. Retry the build
+
+### Error: "No profiles for 'com.bateriku.customer.stg' were found"
+
+**Cause**: Xcode couldn't find or create provisioning profiles.
+
+**Solution**:
+1. Add the `-allowProvisioningUpdates` flag to your xcodebuild commands (Step 4 and Step 6)
+2. Ensure your Apple ID is signed into Xcode
+3. Go to **Xcode → Settings → Accounts** and verify your account
+4. Click **Download All** to sync profiles manually
+
+### Error: "Revoke certificate: Your account already has an Apple Development signing certificate"
+
+**Cause**: The certificate's private key is not installed in your keychain.
+
+**Solution**:
+1. Download the certificate from [Apple Developer Portal](https://developer.apple.com/account/resources/certificates/list)
+2. Double-click to install it in Keychain
+3. Verify it appears in **Xcode → Settings → Accounts → Manage Certificates**
+4. Retry the build with `-allowProvisioningUpdates` flag
+
+### Error: "Please sign in with an app-specific password"
+
+**Cause**: Using regular Apple ID password instead of app-specific password.
+
+**Solution**:
+1. Generate a new app-specific password at [https://account.apple.com](https://account.apple.com)
+2. Use the generated password in the upload command
+
+### Error: "Invalid bundle identifier"
+
+**Cause**: Bundle ID doesn't match what's registered on Apple Developer Portal.
+
+**Current bundle ID**: `com.bateriku.customer.stg`
+
+**Solution**: Verify the bundle ID matches the one registered in App Store Connect.
+
+## Configuration Reference
+
+| Setting | Value |
+|---------|-------|
+| **Bundle ID** | `com.bateriku.customer.stg` |
+| **Team ID** | `JDZG97B6AT` |
+| **Configuration** | `Release-stg` |
+| **Export Method** | `app-store` |
+| **Minimum iOS Version** | 13.0 |
+| **IPA Location** | `build/ios/export/Bateriku STG.ipa` |
+| **Apple ID** | `adrin.zharif@bateriku.com` |
+
+## Security Best Practices
+
+- 🔒 **Never commit credentials** to version control
+- 🔑 **Store app-specific password** securely (use environment variables or secure vaults)
+- ✅ **Use environment variables** for automated deployments:
+
+```bash
+export APPLE_ID=adrin.zharif@bateriku.com
+export APPLE_APP_PASSWORD=your_app_specific_password
+
+xcrun altool --upload-app \
+  --file "build/ios/export/Bateriku STG.ipa" \
+  --type ios \
+  --bundle-id com.bateriku.customer.stg \
+  --username $APPLE_ID \
+  --password $APPLE_APP_PASSWORD
+```
+
+## Additional Resources
+
+- [Apple TestFlight Documentation](https://developer.apple.com/testflight/)
+- [App Store Connect Help](https://help.apple.com/app-store-connect/)
+- [Xcode Build System](https://developer.apple.com/documentation/xcode/building-your-app)
+- [Flutter iOS Deployment](https://docs.flutter.dev/deployment/ios)
+
+## Support
+
+For issues or questions about the deployment process, refer to:
+- Apple Developer Forum: [https://developer.apple.com/forums/](https://developer.apple.com/forums/)
+- Flutter Community: [https://flutter.dev/community](https://flutter.dev/community)
