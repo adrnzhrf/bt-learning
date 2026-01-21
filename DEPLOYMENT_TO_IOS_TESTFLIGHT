@@ -155,7 +155,7 @@ xcrun altool --upload-app \
   --type ios \
   --bundle-id com.bateriku.customer.stg \
   --username adrin.zharif@bateriku.com \
-  --password YOUR_APP_SPECIFIC_PASSWORD
+  --password nmdh-yyaw-nsyy-ucjq
 ```
 
 Replace `YOUR_APP_SPECIFIC_PASSWORD` with the password from Step 2.
