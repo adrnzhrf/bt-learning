@@ -4,6 +4,33 @@
 
 The **Promo Code Screen** (also called Voucher Code Screen) is a dedicated modal screen where customers apply discount voucher/promo codes to their battery purchase orders. It handles promo code validation, discount extraction from API responses, and displays the discount amount. The screen is accessed from the Order Confirmation Screen and returns the applied code and discount details back to the parent screen.
 
+## 🆕 Latest Updates (February 2026)
+
+### New Features & Changes
+
+**Screen Behavior:**
+- ✅ **Auto-redirect on success** - Screen automatically closes after 1 second with valid discount (discount > 0)
+- ✅ **Error message display** - Shows "Invalid Code. Try Again" below input field on validation failure
+- ✅ **Enhanced error state management** - Separate `_errorMessage` field for input field error display
+- ✅ **Smart back button** - Returns data only if voucher applied and valid, otherwise returns null
+
+**Discount Type System:**
+- ✅ **Type-aware currency** - Empty string for percentage, "RM" for fixed
+- ✅ **Multiple type sources** - Checks `promo_code.value_type` then `promo_details.discount_type`
+- ✅ **Default type** - Defaults to "fixed" if type not found in response
+
+**API & Response Handling:**
+- ✅ **HTTP direct calls** - Uses `EnvConfig.partnersApiToken` for authorization
+- ✅ **Enhanced logging** - Comprehensive emoji-prefixed debug logs throughout
+- ✅ **Better error messages** - Displays "Invalid Code. Try Again" instead of generic errors
+- ✅ **State error clearing** - Clears `_errorMessage` on successful apply
+
+**UI/UX Improvements:**
+- ✅ **Error message field** - Shows validation errors directly below input
+- ✅ **Auto-redirect** - 1-second delay before closing on successful validation
+- ✅ **Smart navigation** - Back button returns data only if valid promo applied
+- ✅ **Mounted check** - Ensures context still valid before pop navigation
+
 ---
 
 ## 🏗️ Architecture Layers
@@ -11,19 +38,21 @@ The **Promo Code Screen** (also called Voucher Code Screen) is a dedicated modal
 ```
 ┌─────────────────────────────────────────────────────┐
 │  UI Layer                                           │
-│  [PromoCodeScreen] (462 lines)                      │
-│  - Voucher input field                              │
+│  [PromoCodeScreen] (520 lines)                      │
+│  - Voucher input field with error display           │
 │  - Apply/Remove buttons                             │
 │  - Success/Empty states                             │
 │  - Discount display                                 │
+│  - Auto-redirect on valid discount                  │
 └────────────────┬────────────────────────────────────┘
                  │ uses
 ┌────────────────▼────────────────────────────────────┐
 │  HTTP Client (Direct)                               │
 │  [PromoCodeScreen._applyVoucher()]                  │
 │  - Direct API call to validate endpoint             │
+│  - EnvConfig.partnersApiToken for auth              │
 │  - No BLoC pattern (StatefulWidget)                │
-│  - Local state management                           │
+│  - Local state management with error tracking       │
 └────────────────┬────────────────────────────────────┘
                  │ also used by
 ┌────────────────▼────────────────────────────────────┐
@@ -32,12 +61,13 @@ The **Promo Code Screen** (also called Voucher Code Screen) is a dedicated modal
 │  - validatePromoCode()                             │
 │  - Discount extraction & normalization              │
 │  - Multiple response format support                 │
+│  - PromoDetails extraction                          │
 └────────────────┬────────────────────────────────────┘
                  │ calls
 ┌────────────────▼────────────────────────────────────┐
 │  API Endpoints                                      │
-│  /api/partners/v2/promo_codes/validate (PromoScreen)
-│  /api/partners/v2/orders/calculate (OrderConfirm) │
+│  /api/partners/v2/promo_codes/validate (Direct)    │
+│  /api/partners/v2/orders/calculate (Service)       │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -45,80 +75,93 @@ The **Promo Code Screen** (also called Voucher Code Screen) is a dedicated modal
 
 ## 📁 Key Files & Their Responsibilities
 
-### 1. [promo_code_screen.dart](lib/features/order/screens/promo_code_screen.dart) *(514 lines)*
+### 1. [promo_code_screen.dart](lib/features/order/screens/promo_code_screen.dart) *(520 lines)*
 
 **Purpose:** Dedicated UI screen for voucher code validation and application
 
-**Contains:**
-- `PromoCodeScreen` - StatefulWidget that receives initial voucher code, discount value, amount, and discount type
-- `_PromoCodeScreenState` - State management with local variables
-- `_applyVoucher()` - Direct HTTP API call to validate voucher
-- `_extractDiscountInfo()` - Robust discount extraction from multiple response formats with type detection
-- `_showRemoveVoucherDialog()` - Confirmation dialog to remove voucher
-- UI widgets for input, success/empty states, and illustrations
+**Architecture:**
+- `PromoCodeScreen` - StatefulWidget with constructor parameters for initial voucher data
+- `_PromoCodeScreenState` - State management with local variables for voucher/discount tracking
+- Error message field for validation feedback
+- Auto-redirect logic on successful validation
 
-**Key Responsibilities:**
-- Manages local state: `_appliedVoucher`, `_discountAmount`, `_discountValue`, `_discountType`, `_discountCurrency`, `_isPromoValid`
-- Validates voucher codes against API
-- Extracts discount amount and type from various response formats
-- Supports both fixed and percentage-based discounts
-- Displays success/failure states with illustrations
-- Returns applied voucher data including discount type back to parent screen
-- Handles voucher removal with confirmation
-
-**State Properties:**
+**Key State Variables:**
 ```dart
 late final TextEditingController _voucherController;
-String? _appliedVoucher;           // Applied voucher code
+String? _appliedVoucher;           // Applied voucher code (e.g., "BATTERIUNEWFD")
 double? _discountAmount;           // Raw discount amount (e.g., 50.0)
-String? _discountCurrency;         // Currency (RM or empty for percentage)
+String? _discountCurrency;         // Currency: "RM" for fixed, "" for percentage
 String? _discountValue;            // Formatted discount (e.g., "50.00")
 String? _discountType;             // "fixed" or "percentage"
-bool _isPromoValid;                // Is voucher valid?
+bool _isPromoValid;                // Is discount > 0?
+String? _errorMessage;             // NEW: Error message for input field display
+```
+
+**Constructor Parameters:**
+```dart
+const PromoCodeScreen({
+  Key? key,
+  String? initialVoucherCode,      // Pre-filled voucher code
+  String? initialDiscountValue,    // Pre-filled discount (e.g., "50.00")
+  double? initialDiscountAmount,   // Pre-filled discount amount (e.g., 50.0)
+  String? initialDiscountType,     // Pre-filled type: "fixed" or "percentage"
+})
 ```
 
 **Key Methods:**
 
 ```dart
-// Apply/validate voucher code
+// Validate and apply voucher code
 Future<void> _applyVoucher() {
-  // 1. Send POST request to /api/partners/v2/promo_codes/validate
-  // 2. Parse response for discount and type
-  // 3. Extract discount info (amount + type)
-  // 4. Update local state with type-aware currency
-  // 5. Update UI with success/error and formatted discount message
-  // 6. Show SnackBar with custom styling on error
+  // 1. Validate code is not empty
+  // 2. Convert code to uppercase
+  // 3. Send POST request to /api/partners/v2/promo_codes/validate
+  // 4. Parse response for discount info
+  // 5. Extract discount amount and type via _extractDiscountInfo()
+  // 6. Update state with type-aware currency
+  // 7. Auto-redirect after 1 second if discount > 0
+  // 8. Show error message if validation fails
 }
 
 // Extract discount amount and type from various API response formats
 Map<String, dynamic> _extractDiscountInfo(Map<String, dynamic> data) {
-  // Extract discount type from:
-  //   1. data['promo_code']['value_type'] (newer format)
-  //   2. data['promo_details']['discount_type'] (fallback)
-  //   3. Default to 'fixed' if not found
-  
-  // Try: data['promo_code']['value'] → extract numeric
-  // Fallback: data['promo_discount']
-  // Fallback: data['discount']
-  // Fallback: data['discount_amount']
-  // Fallback: data['amount']
-  // Fallback: 0.0
-  
+  // Extract type from: promo_code.value_type → promo_details.discount_type → default "fixed"
+  // Extract amount from: promo_code.value → promo_discount → discount → discount_amount → amount → 0.0
   // Returns: {'amount': double, 'type': String}
 }
 
-// Show confirmation dialog for removing voucher
+// Show remove confirmation dialog
 void _showRemoveVoucherDialog() {
-  // Display BTConfirmDialog with custom styling
+  // Display BTConfirmDialog with confirmation
   // Clear all state on confirmation
-  // Show success message with animation
+}
+
+// Smart back button navigation
+onPressed: () {
+  if (_appliedVoucher != null && _isPromoValid) {
+    // Return both code and discount value
+    Navigator.pop(context, {
+      'voucherCode': _appliedVoucher,
+      'discountValue': _discountValue,
+      'discountAmount': _discountAmount,
+      'discountType': _discountType,
+    });
+  } else {
+    // No valid promo, return null
+    Navigator.pop(context);
+  }
 }
 ```
 
+**State Initialization:**
+- Pre-fills controller and state from initial parameters if provided
+- Sets `_isPromoValid = true` if initial voucher code provided
+- Sets `_discountCurrency = 'RM'` by default
+
 **API Endpoint (Direct):**
 - **Endpoint**: `POST /api/partners/v2/promo_codes/validate`
-- **Base URL**: `https://staging.jualbaterikereta.com`
-- **Auth Token**: `b0d2a19821a841691af917e54e3a75d4`
+- **Base URL**: From `EnvConfig.batteryPurchaseApiUrl`
+- **Auth**: `EnvConfig.partnersApiToken` in Authorization header
 
 **Request Payload:**
 ```json
@@ -127,7 +170,7 @@ void _showRemoveVoucherDialog() {
 }
 ```
 
-**Response Format:**
+**Response Format (supports multiple sources):**
 ```json
 {
   "code": "BATTERIUNEWFD",
@@ -148,32 +191,23 @@ void _showRemoveVoucherDialog() {
 ```
 
 **Supported Discount Types:**
-- `"fixed"` - Fixed amount discount (e.g., RM50 off)
-- `"percentage"` - Percentage-based discount (e.g., 10% off)
+- `"fixed"` - Fixed amount discount (e.g., RM50 off) - Shows "RM" currency
+- `"percentage"` - Percentage-based discount (e.g., 10% off) - Shows no currency symbol
 
-**Constructor Parameters:**
-```dart
-const PromoCodeScreen({
-  Key? key,
-  String? initialVoucherCode,      // Pre-filled voucher code
-  String? initialDiscountValue,    // Pre-filled discount (e.g., "50.00")
-  double? initialDiscountAmount,   // Pre-filled discount amount (e.g., 50.0)
-  String? initialDiscountType,     // Pre-filled type: "fixed" or "percentage"
-})
-```
+**Auto-Redirect Behavior:**
+- Only redirects if `discountAmount > 0` (valid discount)
+- 1-second delay before auto-redirect
+- Checks `if (mounted)` before navigation
+- Returns complete discount info including type
 
-**Navigation:**
-- **Route**: `/order/promo-code`
-- **Arguments**: Optional initial voucher data
-- **Return**: `Map<String, dynamic>` with voucher code, discount, and type
-  ```dart
-  {
-    'voucherCode': String,         // "BATTERIUNEWFD"
-    'discountValue': String,       // "50.00" (formatted)
-    'discountAmount': double,      // 50.0 (raw amount)
-    'discountType': String         // "fixed" or "percentage"
-  }
-  ```
+**Error Handling:**
+- Invalid code: Sets `_errorMessage = 'Invalid Code. Try Again'` and displays below input
+- Network error: Catches exception and shows same error message
+- Empty code: Silent fail, no API call
+
+**Navigation Returns:**
+- **Success**: `Map<String, dynamic>` with voucher code, discount value, amount, and type
+- **Failure/Cancelled**: `null`
 
 ---
 
@@ -397,6 +431,7 @@ User taps "Apply" button or presses Enter
 _applyVoucher() is called
     ↓
 Direct HTTP POST to /api/partners/v2/promo_codes/validate
+  Headers: Authorization: EnvConfig.partnersApiToken
   Body: { "code": "BATTERIUNEWFD" }
     ↓
 API returns 200 with discount data:
@@ -410,31 +445,34 @@ API returns 200 with discount data:
     ↓
 _extractDiscountInfo() extracts:
   - Discount type: "fixed" (from promo_code.value_type)
-  - Discount amount: 50.0 (from promo_code.value or promo_discount)
+  - Discount amount: 50.0 (from promo_code.value → "RM50" → 50)
     ↓
 setState() updates local state:
   _appliedVoucher = "BATTERIUNEWFD"
   _discountAmount = 50.0
   _discountValue = "50.00" (formatted)
   _discountType = "fixed"
-  _discountCurrency = "RM" (RM for fixed, empty for percentage)
+  _discountCurrency = "RM" (RM for fixed, "" for percentage)
   _isPromoValid = true (discountAmount > 0)
+  _errorMessage = null (cleared on success)
     ↓
 UI updates:
-  ✅ Green "Remove" button appears
-  ✅ Success message: "You've applied RM50.00 OFF!"
-  ✅ TextField disabled
-  ✅ Success illustration (Voucher.png) displays
-  ✅ "Voucher applied!" text shows
+  ✅ Input field shows "BATTERIUNEWFD"
+  ✅ Remove button visible (green)
+  ✅ Success message displays (with illustration)
     ↓
-User taps back button
+[1 second delay for user to see success state]
     ↓
-Navigator.pop(context, {
-  'voucherCode': 'BATTERIUNEWFD',
-  'discountValue': '50.00',
-  'discountAmount': 50.0,
-  'discountType': 'fixed'
-})
+if (mounted) {
+  Navigator.pop(context, {
+    'voucherCode': 'BATTERIUNEWFD',
+    'discountValue': '50.00',
+    'discountAmount': 50.0,
+    'discountType': 'fixed'
+  })
+}
+    ↓
+Screen closes automatically
     ↓
 OrderConfirmationScreen receives and validates via service
 ```
@@ -450,7 +488,7 @@ API returns:
       "value": "10",
       "value_type": "percentage"
     },
-    "promo_discount": 10.00
+    "promo_discount": 10.0
   }
     ↓
 _extractDiscountInfo() extracts:
@@ -460,34 +498,62 @@ _extractDiscountInfo() extracts:
 setState() updates:
   _discountType = "percentage"
   _discountValue = "10.00"
-  _discountCurrency = "" (empty for percentage)
+  _discountCurrency = "" (empty for percentage - no RM shown)
     ↓
-UI displays message: "You've applied 10% OFF!"
-  (Note: Currency RM is NOT shown for percentages)
+UI displays success state:
+  ✅ Message shows discount for percentage format
+  ✅ No "RM" currency prefix (only for fixed)
     ↓
-Returns: {
-  'discountType': 'percentage',
-  'discountValue': '10.00',
-  'discountAmount': 10.0
-}
-```
-  ✅ "Voucher applied!" text shows
+[1 second delay]
     ↓
-User taps back button
-    ↓
-Navigator.pop(context, {
-  'voucherCode': 'BATTERIUNEWFD',
-  'discountValue': '50.00',
-  'discountAmount': 50.0
-})
-    ↓
-OrderConfirmationScreen receives data
+Auto-redirect with:
+  {
+    'voucherCode': 'SAVE10',
+    'discountValue': '10.00',
+    'discountAmount': 10.0,
+    'discountType': 'percentage'
+  }
 ```
 
-### Example 2: PromoValidation via OrderConfirmationService
+### Example 1c: Invalid Promo Code
 
 ```
-OrderConfirmationScreen receives promo code from PromoCodeScreen
+User enters "INVALIDCODE" in voucher input field
+    ↓
+API returns non-200 status (e.g., 400, 404)
+    ↓
+setState() updates:
+  _errorMessage = 'Invalid Code. Try Again'
+  _appliedVoucher = null
+  _isPromoValid = false
+    ↓
+UI displays:
+  ✅ Error message shown below input field
+  ✅ Empty state illustration still visible
+  ✅ Input field remains enabled for retry
+  ✅ No auto-redirect
+    ↓
+User can retry or go back manually
+```
+
+### Example 2: Service Layer Validation after PromoCodeScreen Returns
+
+```
+PromoCodeScreen auto-redirects and closes after 1 second
+    ↓
+OrderConfirmationScreen receives return value:
+  {
+    'voucherCode': 'BATTERIUNEWFD',
+    'discountValue': '50.00',
+    'discountAmount': 50.0,
+    'discountType': 'fixed'
+  }
+    ↓
+OrderConfirmationScreen stores in local state:
+  voucherCode = "BATTERIUNEWFD"
+  voucherDiscountAmount = 50.0
+  voucherDiscountValue = "50.00"
+  voucherDiscountType = "fixed"
     ↓
 Calls: _validatePromoCode(voucherCode)
     ↓
@@ -497,14 +563,14 @@ OrderConfirmationCubit.validatePromoCode(
   productId: 5,
   promoCode: "BATTERIUNEWFD",
   tradeIn: 0,
-  discountAmount: 50.0
+  discountAmount: 50.0  ← Passed from PromoCodeScreen
 )
     ↓
-Cubit emits: PromoValidationLoading()
+Cubit emits: OrderConfirmationState with status = validating
     ↓
-Service calls: OrderService.calculateOrder()
+OrderConfirmationService calls: OrderService.calculateOrder()
     ↓
-API POST /api/partners/v2/orders/calculate
+API POST /api/partners/v2/orders/calculate with promo validation
   Body: {
     "order": {
       "latitude": -3.1456,
@@ -520,76 +586,105 @@ API returns 200 with calculation:
     "subtotal": 450.00,
     "delivery_fee": 15.00,
     "promo_discount": 50.00,
-    "total": 415.00
+    "total": 415.00,
+    "promo_code": {
+      "value": "RM50",
+      "value_type": "fixed"
+    }
   }
     ↓
-Service extracts discount: 50.0
+Service validates:
+  - Extracted discount (50.0) matches promo code discount
+  - Creates PromoDetails with type and value
+  - Creates PromoValidationResult.valid()
     ↓
-Service creates OrderCalculation object
-    ↓
-Service creates PromoValidationResult.valid(
-  message: "Promo code applied! Save RM 50.00",
-  calculation: OrderCalculation(...),
-  promoDetails: PromoDetails(...)
-)
-    ↓
-Cubit emits: PromoValidationSuccess(
-  message: "Promo code applied! Save RM 50.00",
-  discountAmount: 50.0,
-  calculation: OrderCalculation(...)
-)
+Cubit emits: OrderConfirmationState with status = success
     ↓
 OrderConfirmationScreen listens to state
     ↓
 UI updates to show:
-  ✅ Green success message
-  ✅ Promo code chip with checkmark
+  ✅ Green success message: "Promo code applied!"
+  ✅ Promo code chip displays "BATTERIUNEWFD" with checkmark
+  ✅ Discount section shows: "-RM50.00"
   ✅ Updated order total: RM415.00 (was RM465.00)
-  ✅ Discount breakdown: -RM50.00
+  ✅ Order calculation is accurate and verified
 ```
 
-### Example 3: User Removes Promo Code
+### Example 3: User Removes Promo Code and Goes Back
 
 ```
-User taps "Remove" button on applied voucher
+Screen State Before Removal:
+  - _appliedVoucher = "BATTERIUNEWFD"
+  - _discountAmount = 50.0
+  - _isPromoValid = true
+  - UI shows green "Remove" button
     ↓
-_showRemoveVoucherDialog() shows BTConfirmDialog:
+User taps green "Remove" button
+    ↓
+_showRemoveVoucherDialog() displays BTConfirmDialog:
   Title: "Do you want to remove this voucher?"
   Buttons: [Remove Voucher] [Cancel]
     ↓
-User confirms "Remove Voucher"
+User taps "Remove Voucher" button
     ↓
-setState() clears all state:
+setState() clears all promo state:
   _appliedVoucher = null
-  _discountAmount = null
-  _discountValue = null
+  _discountAmount = 0.0
+  _discountValue = "0.00"
   _discountType = null
+  _discountCurrency = ""
   _isPromoValid = false
+  _errorMessage = null
   _voucherController.clear()
-  _discountCurrency = null
     ↓
-UI updates:
+UI reverts to empty state:
   ✅ Input field re-enabled and cleared
-  ✅ "Apply" button visible again
-  ✅ Empty state illustration displays (no_voucher.png)
-  ✅ "No Voucher" message shows
-  ✅ "Oops! No voucher applied yet" description
+  ✅ "Apply" button visible again (was "Remove")
+  ✅ Empty state illustration (no_voucher.png) displays
+  ✅ "No Voucher" header text shows
+  ✅ "Oops! No voucher applied yet" description shows
     ↓
-User taps back button
+User taps back button (top-left arrow)
     ↓
-Navigator.pop(context)  // No return data (null)
+Smart Back Button Logic Executes:
+  if (_appliedVoucher != null && _isPromoValid) {
+    // Has valid promo - return discount data
+    Navigator.pop(context, {
+      'voucherCode': _appliedVoucher,
+      'discountValue': _discountValue,
+      'discountAmount': _discountAmount,
+      'discountType': _discountType,
+    });
+  } else {
+    // No promo applied - return null
+    Navigator.pop(context);
+  }
     ↓
-OrderConfirmationScreen receives null
+Since _appliedVoucher = null:
+  Navigator.pop(context)  // Returns null (no promo data)
     ↓
-setState() clears voucher values:
-  voucherCode = null
-  voucherDiscountAmount = null
-  voucherDiscountValue = null
-  voucherDiscountType = null
+OrderConfirmationScreen receives null in result
+    ↓
+.then((value) {
+  if (value != null && value is Map<String, dynamic>) {
+    // Only executed if value is not null
+    setState(() { ... });
+  }
+  // If value is null, this block is skipped
+  // Voucher state remains unchanged or cleared
+})
+    ↓
+OrderConfirmationScreen state update:
+  voucherCode remains null or gets cleared
+  voucherDiscountAmount remains null or gets cleared
+  voucherDiscountValue remains null or gets cleared
     ↓
 _calculateOrder() recalculates without promo
     ↓
-UI updates with original total (no discount)
+UI updates with original total:
+  ✅ Discount section hidden
+  ✅ Total shows original price (no discount)
+  ✅ Promo code chip removed
 ```
 
 ---

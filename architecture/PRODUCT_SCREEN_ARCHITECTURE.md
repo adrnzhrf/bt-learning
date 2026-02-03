@@ -4,6 +4,32 @@
 
 The **Product Screen** (also called Product Battery Screen) is where customers select a compatible battery for their vehicle in the Bateriku battery purchase flow. It displays API-fetched products with detailed specifications, pricing, warranty information, and visual selection indicators. The screen uses **BLoC pattern** for state management and follows clean architecture principles.
 
+## 🆕 Latest Updates (February 2026)
+
+### New Features & Changes
+
+**Architecture Improvements:**
+- ✅ **Singleton pattern** implemented for `BatteryPurchaseService` and `ProductsService`
+- ✅ **New method `selectBatteryFromProducts()`** - Direct selection from API products with quote fetching
+- ✅ **New method `loadBatteries()`** - Alternative product loading flow
+- ✅ **Getter-based warranty** - Computed warranty string for display
+- ✅ **Error clearing method** - `clearErrors()` for state reset
+
+**Service Layer Changes:**
+- ✅ **ProductsService** now uses singleton pattern (`ProductsService.instance`)
+- ✅ **Enhanced error parsing** - Multiple fallback error message sources
+- ✅ **Better request logging** - Improved logging for API debugging
+
+**Product Model Enhancements:**
+- ✅ **manufacturerName field** - Added for product identification
+- ✅ **Flexible product ID parsing** - Handles both string and numeric IDs
+- ✅ **Multiple recommended flags** - Supports both `is_recommended` and `recommended` fields
+
+**Cubit Improvements:**
+- ✅ **Single responsibility** - Cubit focuses on state management
+- ✅ **Better error handling** - Per-operation error states
+- ✅ **Improved quote generation** - Separate logic for battery selection and quote fetching
+
 ---
 
 ## 🏗️ Architecture Layers
@@ -11,7 +37,7 @@ The **Product Screen** (also called Product Battery Screen) is where customers s
 ```
 ┌─────────────────────────────────────────────────────┐
 │  UI Layer                                           │
-│  [ProductBatteryScreen] (451 lines)                │
+│  [ProductBatteryScreen] (500 lines)                │
 │  - Renders product cards                            │
 │  - Handles user selection                           │
 │  - Navigates to order confirmation                 │
@@ -19,26 +45,30 @@ The **Product Screen** (also called Product Battery Screen) is where customers s
                  │ listens to
 ┌────────────────▼────────────────────────────────────┐
 │  Business Logic (BLoC Pattern)                      │
-│  [BatteryPurchaseCubit] (341 lines)                │
-│  - selectBatteryFromProducts()                     │
+│  [BatteryPurchaseCubit] (342 lines)                │
+│  - loadBatteries()                                 │
 │  - selectBattery()                                 │
-│  - setProductsFromRoute()                          │
-│  - applyPromoCode()                                │
+│  - selectBatteryFromProducts()                     │
+│  - createOrder()                                   │
+│  - getOrderStatus()                                │
+│  - checkLocationService()                          │
+│  - clearErrors()                                   │
 └────────────────┬────────────────────────────────────┘
                  │ delegates to
 ┌────────────────▼────────────────────────────────────┐
-│  Service Layer                                      │
-│  [BatteryPurchaseService] (API calls)              │
-│  - getQuote()                                      │
-│  - checkLocationService()                          │
-│  - createOrder()                                   │
+│  Service Layer (Singletons)                         │
+│  [BatteryPurchaseService] - Quote & order logic   │
+│  [ProductsService] (221 lines) - Product fetch    │
+│  - Singleton instance access                       │
+│  - Enhanced error parsing                          │
+│  - Request logging                                 │
 └────────────────┬────────────────────────────────────┘
                  │ calls
 ┌────────────────▼────────────────────────────────────┐
 │  API Clients & Data Models                          │
-│  [ProductsService] - Product data                  │
-│  [ProductItem] - Product model                     │
-│  [OrderService] - Order calculations               │
+│  [ProductItem] - Product model with warranty       │
+│  [ProductsResult] - Result wrapper                 │
+│  API: POST /api/partners/v2/orders/products       │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -46,17 +76,26 @@ The **Product Screen** (also called Product Battery Screen) is where customers s
 
 ## 📁 Key Files & Their Responsibilities
 
-### 1. [product_battery_screen.dart](lib/features/battery_purchase/screens/product_battery_screen.dart) *(451 lines)*
+### 1. [product_battery_screen.dart](lib/features/battery_purchase/screens/product_battery_screen.dart) *(500 lines)*
 
 **Purpose:** Main UI screen for battery product selection
 
+**Architecture:**
+- `ProductBatteryScreen` - StatelessWidget that receives route arguments and creates BLoC
+- `_ProductBatteryScreenContent` - Main content widget with BLoC integration
+- Extracted constants for styling (colors, sizes, padding)
+- Component builder methods for modularity
+
 **Contains:**
-- `ProductBatteryScreen` - StatelessWidget that receives route arguments
-- `_ProductBatteryScreenContent` - Main content with BLoC integration
+- Route argument extraction (products, brandId, customerInfo, vehicleInfo, locationInfo)
+- BLoC provider setup with `setProductsFromRoute()` initialization
 - Product image loading with network/asset fallback
 - Product card UI with selection states
 - Floating action button for confirmation
 - `_buildDisplayBatteries()` - Converts ProductItem objects to display format
+- `_buildAppBar()` - Displays vehicle plate number
+- `_buildBody()` - Main content area with product list
+- `_buildFloatingActionButton()` - Confirmation button
 
 **Key Features:**
 - Displays vehicle plate number in AppBar title
@@ -69,8 +108,9 @@ The **Product Screen** (also called Product Battery Screen) is where customers s
   - Description (if available)
   - "Recommended" badge
   - Availability indicator
-  - Selection highlighting (green border + background)
+  - Selection highlighting (green border #9ACD32 + background #E8F5E9)
 - FAB "Confirm & Proceed" button (visible only when product selected)
+- Styling constants: border radius 12, padding 16, FAB height 56
 
 **State Dependencies:**
 - Uses `BatteryPurchaseCubit` via `BlocBuilder`
@@ -80,30 +120,33 @@ The **Product Screen** (also called Product Battery Screen) is where customers s
 
 ---
 
-### 2. [battery_purchase_cubit.dart](lib/bloc/battery_purchase/battery_purchase_cubit.dart) *(341 lines)*
+### 2. [battery_purchase_cubit.dart](lib/bloc/battery_purchase/battery_purchase_cubit.dart) *(342 lines)*
 
 **Purpose:** Business logic orchestration for battery purchase flow
+
+**Implementation:**
+- **Singleton pattern** - Uses `BatteryPurchaseService.instance` for consistent access
+- **Cubit-based state** - Extends `Cubit<BatteryPurchaseState>` for reactive updates
+- **Comprehensive error handling** - Per-operation error tracking and clearing
 
 **Key Methods:**
 
 ```dart
 class BatteryPurchaseCubit extends Cubit<BatteryPurchaseState> {
-  
-  // Set products and brand ID from route arguments
-  void setProductsFromRoute({
-    required List<ProductItem> products,
-    int? brandId,
+  final BatteryPurchaseService _batteryService;
+
+  BatteryPurchaseCubit({
+    BatteryPurchaseService? batteryService,
+  }) : _batteryService = batteryService ?? BatteryPurchaseService.instance;
+
+  // Load batteries by vehicle model
+  Future<void> loadBatteries({
+    required String vehicleModel,
+    String? vehicleYear,
+    String? engineType,
   })
   
-  // Select battery from API products and get quote
-  Future<void> selectBatteryFromProducts({
-    required String batteryId,
-    required double latitude,
-    required double longitude,
-    String? promoCode,
-  })
-  
-  // Alternative selection method with quote generation
+  // Select battery and get quote
   Future<void> selectBattery({
     required String batteryId,
     required double latitude,
@@ -111,38 +154,68 @@ class BatteryPurchaseCubit extends Cubit<BatteryPurchaseState> {
     String? promoCode,
   })
   
+  // NEW: Select from API products with direct quote fetching
+  Future<void> selectBatteryFromProducts({
+    required String batteryId,
+    required double latitude,
+    required double longitude,
+    String? promoCode,
+  })
+  
   // Create battery purchase order
-  Future<void> createOrder({...})
+  Future<void> createOrder({
+    required CustomerInfo customer,
+    required LocationInfo location,
+    required VehicleInfo vehicle,
+    String? promoCode,
+    bool hasTradeIn = false,
+  })
   
-  // Apply promo code (recalculates quote)
-  void applyPromoCode(String promoCode)
+  // Get order status by ID
+  Future<void> getOrderStatus(String orderId)
   
-  // Reset entire purchase flow
-  void reset()
-  
-  // Set customer/vehicle/location info
-  void setCustomerInfo(CustomerInfo customer)
-  void setVehicleInfo(VehicleInfo vehicle)
-  void setLocation(LocationInfo location)
-  void setTradeIn(bool hasTradeIn)
+  // Check location service availability
+  Future<void> checkLocationService({
+    required double latitude,
+    required double longitude,
+  })
   
   // Clear all errors
   void clearErrors()
+  
+  // Helper: Set products and brand from route
+  void setProductsFromRoute({
+    required List<ProductItem> products,
+    int? brandId,
+  })
 }
 ```
 
-**State Management:**
-- `BatteryPurchaseStatus.initial` → Screen just loaded
-- `BatteryPurchaseStatus.loading` → Fetching quote or products
-- `BatteryPurchaseStatus.success` → Operation succeeded
-- `BatteryPurchaseStatus.failure` → Operation failed
+**State Status Enum:**
+```dart
+enum BatteryPurchaseStatus {
+  initial,      // Initial state
+  loading,      // Operation in progress
+  success,      // Operation succeeded
+  failure,      // Operation failed
+}
+```
 
 **Responsibilities:**
-- Manages selected battery state
-- Handles quote fetching from `BatteryPurchaseService`
-- Converts `ProductItem` to `BatteryProduct` for internal state
-- Manages promo code validation
-- Coordinates with multiple services
+- Manages selected battery state across operations
+- Handles battery loading from API
+- Coordinates quote fetching from `BatteryPurchaseService`
+- Converts `ProductItem` to `BatteryProduct` for internal state (NEW)
+- Manages order creation and status tracking
+- Checks location service availability
+- Provides error clearing for form resets
+- Manages promo code application
+
+**Key Improvements:**
+- Singleton service for consistent state
+- Separate selection methods for different flows
+- Comprehensive error tracking per operation
+- Error clearing for form resets
 
 ---
 
@@ -192,14 +265,28 @@ class BatteryPurchaseState extends Equatable {
 
 ---
 
-### 4. [products_service.dart](lib/core/services/products_service.dart) *(217 lines)*
+### 4. [products_service.dart](lib/core/services/products_service.dart) *(221 lines)*
 
 **Purpose:** API client for fetching compatible battery products
+
+**Implementation:**
+- **Singleton pattern** - `ProductsService.instance` for consistent access
+- **Enhanced error parsing** - Multiple fallback error sources
+- **Comprehensive logging** - Detailed API debugging logs
 
 **Key Method:**
 
 ```dart
 class ProductsService {
+  String get _baseUrl => EnvConfig.batteryPurchaseApiUrl;
+  
+  static final ProductsService instance = ProductsService._();
+  ProductsService._();
+
+  static const String _productsEndpoint = '/api/partners/v2/orders/products';
+
+  /// Get products list based on user and order information
+  /// Authorization: Direct token value (not Bearer token)
   Future<ProductsResult> getProducts({
     required String token,
     required String userName,
@@ -213,8 +300,6 @@ class ProductsService {
 ```
 
 **API Endpoint:** `POST /api/partners/v2/orders/products`
-
-**Base URL:** From `EnvConfig.batteryPurchaseApiUrl`
 
 **Request Payload:**
 ```json
@@ -232,7 +317,15 @@ class ProductsService {
 }
 ```
 
-**Response:**
+**Response Parsing:**
+```dart
+// Flexible parsing supports multiple response formats
+final brandId = data['brand_id'] as int?;
+final productsList = data['products'] as List?  // Primary
+                  ?? data['data'] as List? ?? [];  // Fallback
+```
+
+**Response Example:**
 ```json
 {
   "brand_id": 1,
@@ -241,6 +334,7 @@ class ProductsService {
       "id": "astra-ns70l",
       "name": "ASTRA NS70L",
       "brand": "Astra",
+      "manufacturer_name": "Astra Manufacturing",
       "price": "RM 450.00",
       "price_cents": 45000,
       "warranty_period": 36,
@@ -250,49 +344,81 @@ class ProductsService {
       "is_available": true,
       "description": "Premium long-lasting battery",
       "category": "Battery",
-      "consumable": true
+      "consumable": true,
+      "size_ranking": 1
     }
   ]
 }
 ```
 
+**Error Handling:**
+- Multiple error source fallback: `message` → `error` → `errors` array → HTTP status
+- Network errors wrapped with context
+- Detailed logging at each step
+
 **Returns:** `ProductsResult` object containing list of `ProductItem` objects and `brandId`
 
 ---
 
-### 5. [ProductItem Model](lib/core/services/products_service.dart) *(140 lines)*
+### 5. [ProductItem Model](lib/core/services/products_service.dart) *(ProductItem class)*
 
-**Purpose:** Data model representing a single battery product
+**Purpose:** Data model representing a single battery product from API
 
 **Key Properties:**
 
 ```dart
 class ProductItem {
-  final String id;                      // Unique product ID
+  final String id;                      // Unique product ID (string or numeric)
   final String name;                    // Product name (e.g., "ASTRA NS70L")
   final String? brand;                  // Brand name (e.g., "Astra")
+  final String? manufacturerName;       // NEW: Manufacturer name (e.g., "Astra Manufacturing")
   final String category;                // Product category (e.g., "Battery")
-  final bool consumable;                // Whether it's consumable
+  final bool consumable;                // Whether it's consumable (default: false)
   final String? imageUrl;               // Image URL (network or asset)
-  final int sizeRanking;                // Size ranking (for sorting)
-  final int warrantyPeriod;             // Warranty in months
-  final int? warrantyMileage;           // Warranty in kilometers
+  final int sizeRanking;                // Size ranking (for sorting, default: 0)
+  final int warrantyPeriod;             // Warranty in months (default: 12)
+  final int? warrantyMileage;           // Warranty in kilometers (optional)
   final String price;                   // Formatted price (e.g., "RM 450.00")
   final int priceCents;                 // Price in cents (45000)
   final String? description;            // Product description
   final Map<String, dynamic>? specifications;  // Tech specs (voltage, capacity, etc.)
-  final bool isAvailable;               // Is product available?
-  final bool isRecommended;             // Is product recommended?
+  final bool isAvailable;               // Is product available? (default: true)
+  final bool isRecommended;             // Is product recommended? (default: false)
+}
+```
+
+**Factory Constructor with Enhanced Parsing:**
+```dart
+factory ProductItem.fromJson(Map<String, dynamic> json) {
+  return ProductItem(
+    id: json['id']?.toString() ?? '',              // Handles string/int
+    name: json['name']?.toString() ?? '',
+    brand: json['brand']?.toString(),
+    manufacturerName: json['manufacturer_name']?.toString(),  // NEW
+    category: json['category']?.toString() ?? 'Battery',
+    consumable: json['consumable'] == true,
+    imageUrl: json['image_url']?.toString(),
+    sizeRanking: json['size_ranking'] as int? ?? 0,
+    warrantyPeriod: json['warranty_period'] as int? ?? 12,
+    warrantyMileage: json['warranty_mileage'] as int?,
+    price: json['price']?.toString() ?? 'RM 0.00',
+    priceCents: json['price_cents'] as int? ?? 0,
+    description: json['description']?.toString(),
+    specifications: json['specifications'] as Map<String, dynamic>?,
+    isAvailable: json['is_available'] != false,
+    isRecommended:
+        json['is_recommended'] == true || json['recommended'] == true,  // Multiple flags
+  );
 }
 ```
 
 **Helper Methods:**
 
 ```dart
-// Getter
+// Getter for formatted price
 String get formattedPrice => price;
 
-// Computed warranty string
+// Computed warranty string (NEW: getter-based)
 String get warranty {
   if (warrantyMileage != null) {
     return '$warrantyPeriod Months / ${(warrantyMileage! / 1000).toInt()},000 KM';
@@ -308,9 +434,10 @@ Map<String, dynamic> toJson()
 **Example:**
 ```dart
 ProductItem(
-  id: 'astra-ns70l',
+  id: 'astra-ns70l',                // Can be string or numeric
   name: 'ASTRA NS70L',
   brand: 'Astra',
+  manufacturerName: 'Astra Manufacturing',
   price: 'RM 450.00',
   priceCents: 45000,
   warrantyPeriod: 36,
@@ -319,8 +446,16 @@ ProductItem(
   isRecommended: true,
   isAvailable: true,
   description: 'Premium long-lasting battery',
+  category: 'Battery',
+  consumable: false,
 )
 ```
+
+**Key Features:**
+- Flexible ID parsing (accepts string or numeric IDs)
+- Warranty getter computes display string
+- Multiple recommended flag support (`is_recommended` or `recommended`)
+- Comprehensive JSON serialization with null coalescing
 
 ---
 
@@ -801,16 +936,21 @@ void main() {
 
 ## ⚠️ Important Notes
 
-1. **Products from API only** - No hardcoded fallback products
-2. **Route arguments required** - Screen expects products list in navigation args
-3. **Product IDs can be String** - Both string IDs (e.g., "astra-ns70l") and numeric IDs (e.g., 5) are supported
-4. **Images support both network and local assets** - Graceful fallback to icon
-5. **Warranty can be time or distance based** - Or both combined
-6. **Selection is visual feedback only** - Actual selection happens when proceeding
-7. **BLoC manages state consistently** - No local state conflicts
-8. **Quote fetching is optional** - Can be deferred to order confirmation
-9. **Location data is required** - For delivery fee calculation
-10. **Brand ID is optional** - Used for analytics and filtering
+1. **Singleton patterns** - Both `ProductsService` and `BatteryPurchaseService` use singleton pattern
+2. **Products from API only** - No hardcoded fallback products
+3. **Route arguments required** - Screen expects products list in navigation args
+4. **Product IDs flexible** - Handles both string (e.g., "astra-ns70l") and numeric IDs (e.g., 5)
+5. **Manufacturer name field** - NEW: Added to ProductItem for better identification
+6. **Images support both network and local assets** - Graceful fallback to icon
+7. **Warranty getter-based** - Computed warranty string via getter method
+8. **Multiple recommended flags** - Supports both `is_recommended` and `recommended` fields
+9. **Flexible response parsing** - Multiple fallback paths for `products` array (`products` or `data`)
+10. **Warranty can be time or distance based** - Or both combined
+11. **Selection state managed by Cubit** - Visual feedback synchronized with state
+12. **Quote fetching integrated** - `selectBatteryFromProducts()` automatically fetches quote
+13. **Location data is required** - For delivery fee calculation
+14. **Brand ID is optional** - Used for analytics and filtering
+15. **Enhanced error handling** - Multiple error source fallbacks in ProductsService
 
 ---
 
@@ -827,15 +967,16 @@ This architecture makes it easy to add:
 - **Wishlist functionality** - Save products for later
 - **Product details modal** - Expandable full details view
 - **Size recommendations** - AI-based battery sizing
+- **Performance optimization** - Pagination for large product lists
 
 ---
 
 ## 📚 Related Files
 
-- [product_battery_screen.dart](lib/features/battery_purchase/screens/product_battery_screen.dart) - Main UI
-- [battery_purchase_cubit.dart](lib/bloc/battery_purchase/battery_purchase_cubit.dart) - State management
+- [product_battery_screen.dart](lib/features/battery_purchase/screens/product_battery_screen.dart) - Main UI (500 lines)
+- [battery_purchase_cubit.dart](lib/bloc/battery_purchase/battery_purchase_cubit.dart) - State management (342 lines)
 - [battery_purchase_state.dart](lib/bloc/battery_purchase/battery_purchase_state.dart) - State definitions
-- [products_service.dart](lib/core/services/products_service.dart) - API client
+- [products_service.dart](lib/core/services/products_service.dart) - API client (221 lines, singleton)
 - [battery_purchase_service.dart](lib/core/services/battery_purchase_service.dart) - Business logic service
 - [vehicle_screen.dart](lib/shared/screens/vehicle_screen.dart) - Previous screen (calls ProductsService)
 - [order_confirmation_screen.dart](lib/features/order/screens/order_confirmation_screen.dart) - Next screen

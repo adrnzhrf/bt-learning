@@ -4,6 +4,26 @@
 
 The **Order Confirmation Screen** is the checkout/order review page in Bateriku's mobile app where customers confirm battery purchase details, apply promo codes, see pricing breakdowns, and create orders. It's been **refactored from 2,198 lines to a clean architecture** separating concerns across layers.
 
+## 🆕 Latest Updates (February 2026)
+
+### New Features & Changes
+
+**Service Layer Enhancements:**
+- ✅ **Singleton pattern** implemented for `OrderConfirmationService` and `OrderService`
+- ✅ **Advanced promo validation** with `PromoDetails` extraction (discount type, value, minimum amount)
+- ✅ **Multi-source discount resolution** - intelligently extracts discount from multiple API response sources
+- ✅ **Comprehensive debug logging** for promo code validation troubleshooting
+
+**API Changes:**
+- ✅ **New parameters for order creation**: `leadReason` and `orderType` for better order tracking and categorization
+- ✅ **Flexible product ID support** - accepts both String (e.g., "astra-ns70l") and int IDs
+- ✅ **Enhanced error handling** with detailed API logging
+
+**Cubit & State Management:**
+- ✅ **OrderCreationSuccess** now contains full `OrderCreationResult` object for richer data access
+- ✅ Better state isolation with combined `OrderConfirmationUpdated` state for multiple concerns
+- ✅ Improved error propagation with individual error states per operation
+
 ---
 
 ## 🏗️ Architecture Layers
@@ -19,24 +39,25 @@ The **Order Confirmation Screen** is the checkout/order review page in Bateriku'
                  │ listens to
 ┌────────────────▼────────────────────────────────────┐
 │  Business Logic (BLoC Pattern)                      │
-│  [OrderConfirmationCubit] (160 lines)              │
+│  [OrderConfirmationCubit] (164 lines)              │
 │  - calculateOrder()                                │
 │  - validatePromoCode()                            │
 │  - loadProducts()                                  │
-│  - toggleTradeIn()                                │
+│  - createOrder()                                  │
 └────────────────┬────────────────────────────────────┘
                  │ delegates to
 ┌────────────────▼────────────────────────────────────┐
 │  Service Layer                                      │
-│  [OrderConfirmationService] (297 lines)           │
-│  - API calls to backend                            │
-│  - Response parsing                                │
-│  - Error handling                                  │
+│  [OrderConfirmationService] (300 lines)           │
+│  - Singleton instance access                       │
+│  - Smart discount resolution                       │
+│  - PromoDetails extraction                         │
+│  - Comprehensive error handling                    │
 └────────────────┬────────────────────────────────────┘
                  │ calls
 ┌────────────────▼────────────────────────────────────┐
 │  API Clients                                        │
-│  [OrderService] - Order calculations              │
+│  [OrderService] (381 lines) - Order calculations  │
 │  [ProductsService] - Product data                 │
 └─────────────────────────────────────────────────────┘
 ```
@@ -45,22 +66,7 @@ The **Order Confirmation Screen** is the checkout/order review page in Bateriku'
 
 ## 📁 Key Files & Their Responsibilities
 
-### 1. [order_confirmation_screen.dart](lib/features/order/screens/order_confirmation_screen.dart) *(2,397 lines - Original)*
-
-**Purpose:** Main UI screen (old monolithic implementation)
-
-**Contains:**
-- Original implementation with everything mixed together
-- 20+ local state variables
-- API calls scattered throughout
-- Business logic mixed with UI rendering
-- ⚠️ Hard to test and maintain
-
-**Status:** Still available for backward compatibility, but refactored version is recommended
-
----
-
-### 2. [order_confirmation_cubit.dart](lib/bloc/order_confirmation/order_confirmation_cubit.dart) *(160 lines)*
+### 1. [order_confirmation_cubit.dart](lib/bloc/order_confirmation/order_confirmation_cubit.dart) *(164 lines)*
 
 **Purpose:** Business logic orchestration
 
@@ -119,13 +125,20 @@ class OrderConfirmationCubit extends Cubit<OrderConfirmationState> {
 
 ---
 
-### 3. [order_confirmation_service.dart](lib/core/services/order_confirmation_service.dart) *(297 lines)*
+### 2. [order_confirmation_service.dart](lib/core/services/order_confirmation_service.dart) *(300 lines)*
 
-**Purpose:** API communication and service coordination
+**Purpose:** API communication and service coordination with enhanced promo validation
+
+**Implementation Details:**
+- **Singleton pattern** - Ensures single instance across app (`OrderConfirmationService.instance`)
+- **Advanced promo validation** - Extracts discount values from multiple sources
+- **Detailed logging** - Debug logging for troubleshooting promo code validation
 
 **Key Methods:**
 ```dart
 class OrderConfirmationService {
+  static final OrderConfirmationService instance = OrderConfirmationService._();
+
   // Delegates to OrderService for calculation
   Future<OrderCalculationResult> calculateOrderWithPromo({
     required double latitude,
@@ -145,7 +158,7 @@ class OrderConfirmationService {
     required String vehiclePlateNumber,
   })
   
-  // Validate promo code by calculating order
+  // Validate promo code by calculating order with smart discount extraction
   Future<PromoValidationResult> validatePromoCode({
     required double latitude,
     required double longitude,
@@ -160,61 +173,166 @@ class OrderConfirmationService {
 }
 ```
 
-**Responsibilities:**
-- Delegates to `OrderService` for order calculations
-- Delegates to `ProductsService` for product data
-- Parses API responses
-- Handles errors
-- Implements retry logic
+**Promo Validation Features:**
+- **Multi-source discount extraction** - Tries multiple sources (parameter, calculation, promo_code object, discount field)
+- **PromoDetails parsing** - Extracts discount type, value, and minimum order amount from API response
+- **Flexible response handling** - Handles different API response formats
 
----
-
-### 4. [order_service.dart](lib/core/services/order_service.dart) *(349 lines)*
-
-**Purpose:** Order calculation API client
-
-**Key Method:**
+**Key Classes:**
 ```dart
-class OrderService {
-  Future<OrderCalculationResult> calculateOrder({
-    required String token,
-    required double latitude,
-    required double longitude,
-    required dynamic productId,
-    String? promoCode,
-    int tradeIn = 0,
-  })
+class PromoValidationResult {
+  final bool isValid;
+  final String message;
+  final OrderCalculation? calculation;
+  final PromoDetails? promoDetails;
+
+  PromoValidationResult.valid({...}) // Success case
+  PromoValidationResult.invalid({...}) // Failure case
+}
+
+class PromoDetails {
+  final String? discountType;        // e.g., "fixed", "percentage"
+  final double? discountValue;       // Discount amount/percentage
+  final double? minimumOrderAmount;  // Minimum purchase requirement
+  
+  factory PromoDetails.fromJson(Map<String, dynamic> json)
+  Map<String, dynamic> toJson()
 }
 ```
 
-**API Endpoint:** `POST /api/partners/v2/orders/calculate`
-
-**Parses Response into [OrderCalculation](#ordercalculation-data-model) model:**
-- `subtotal` - Product price
-- `deliveryFee` - Shipping cost
-- `promoDiscount` - Discount from promo code
-- `tradeInDiscount` - Trade-in vehicle discount
-- `total` - Final amount to pay
-- `isPromoValid` - Promo code validity
-- `promoCode` - Code that was applied
+**Responsibilities:**
+- Delegates to `OrderService` for order calculations
+- Delegates to `ProductsService` for product data
+- Smart discount amount resolution (fallback chain)
+- Enhanced promo details extraction from API
+- Comprehensive error handling with detailed logging
 
 ---
 
-### 5. [order_confirmation_state.dart](lib/bloc/order_confirmation/order_confirmation_state.dart) *(140 lines)*
+### 3. [order_service.dart](lib/core/services/order_service.dart) *(381 lines)*
+
+**Purpose:** Core order API client for calculations and creation
+
+**Singleton Implementation:**
+```dart
+class OrderService {
+  String get _baseUrl => EnvConfig.batteryPurchaseApiUrl;
+  static final OrderService instance = OrderService._();
+  OrderService._();
+
+  static const String _calculateEndpoint = '/api/partners/v2/orders/calculate';
+  static const String _createOrderEndpoint = '/api/partners/v2/orders';
+}
+```
+
+**Key Methods:**
+```dart
+// Calculate order total with discounts and fees
+Future<OrderCalculationResult> calculateOrder({
+  required String token,
+  required double latitude,
+  required double longitude,
+  required dynamic productId,    // Accepts String or int
+  String? promoCode,
+  int tradeIn = 0,
+})
+
+// Create new order with customer and payment details
+Future<OrderCreationResult> createOrder({
+  required String token,
+  required String userName,
+  required String userPhone,
+  required String userEmail,
+  required double latitude,
+  required double longitude,
+  required String address,
+  required String vehiclePlateNumber,
+  required dynamic productId,    // Accepts String or int
+  required int brandId,
+  String paymentType = 'billplz',
+  int tradeIn = 0,
+  String? promoCode,
+  String? notes,
+  String? redirectUrl,
+  String? leadReason,            // NEW: For order tracking/analytics
+  String? orderType,             // NEW: For order categorization
+})
+```
+
+**API Endpoints:**
+- `POST /api/partners/v2/orders/calculate` - Calculate order with discounts
+- `POST /api/partners/v2/orders` - Create order and initiate payment
+
+**Parses Responses:**
+- `OrderCalculationResult` - Contains OrderCalculation model with pricing breakdown
+- `OrderCreationResult` - Contains OrderCreationResponse with order ID and payment URL
+
+---
+
+### 4. [order_confirmation_state.dart](lib/bloc/order_confirmation/order_confirmation_state.dart) *(140 lines)*
 
 **Purpose:** State definitions for the Cubit
 
-**Contains:**
-- All possible states the confirmation screen can be in
-- Immutable state objects extending `Equatable`
-- Used for BLoC event handling
-- Props list for equality comparison
+**State Hierarchy:**
+```dart
+abstract class OrderConfirmationState extends Equatable {}
+
+// Initial state
+class OrderConfirmationInitial
+
+// Calculation states
+class OrderCalculationLoading
+class OrderCalculationSuccess {
+  final OrderCalculation calculation;
+}
+class OrderCalculationError {
+  final String message;
+}
+
+// Products loading states
+class ProductsLoading
+class ProductsLoaded {
+  final List<ProductItem> products;
+  final int? brandId;
+}
+class ProductsError
+
+// Promo validation states
+class PromoValidationLoading
+class PromoValidationSuccess {
+  final String message;
+  final double discountAmount;
+  final OrderCalculation? calculation;
+}
+class PromoValidationError
+
+// Order creation states
+class OrderCreationLoading
+class OrderCreationSuccess {
+  final OrderCreationResult result;  // NEW: Contains full result object
+}
+class OrderCreationError
+
+// Combined state (if needed)
+class OrderConfirmationUpdated {
+  final OrderCalculation? calculation;
+  final List<ProductItem>? products;
+  final String? calculationError;
+  final String? productsError;
+  final String? promoError;
+}
+```
+
+**State Features:**
+- All states extend `Equatable` for equality comparison
+- Props lists for proper state comparison
+- Type-safe state access in widgets
 
 ---
 
 ## 💾 Data Models
 
-### OrderCalculation (in [order_service.dart](lib/core/services/order_service.dart#L187))
+### OrderCalculation
 
 ```dart
 class OrderCalculation {
@@ -263,7 +381,7 @@ class OrderCalculationResult {
 }
 ```
 
-### ProductItem (from ProductsService)
+### ProductItem
 
 ```dart
 class ProductItem {
@@ -285,6 +403,35 @@ class OrderCreationResponse {
   final String? paymentUrl;      // Payment gateway URL
   final String? paymentId;       // Payment provider's ID
   final double totalAmount;      // Amount to pay
+}
+```
+
+### OrderCreationResult
+
+```dart
+class OrderCreationResult {
+  final bool isSuccess;
+  final OrderCreationResponse? order;
+  final String? error;
+
+  OrderCreationResult.success({required this.order})
+      : isSuccess = true, error = null;
+
+  OrderCreationResult.failure(this.error)
+      : isSuccess = false, order = null;
+}
+```
+
+### PromoDetails
+
+```dart
+class PromoDetails {
+  final String? discountType;     // e.g., "fixed", "percentage"
+  final double? discountValue;    // Discount amount/percentage
+  final double? minimumOrderAmount; // Minimum purchase requirement
+
+  factory PromoDetails.fromJson(Map<String, dynamic> json)
+  Map<String, dynamic> toJson()
 }
 ```
 
@@ -323,11 +470,21 @@ Service makes API call:
         ↓
 API responds with calculation including promoDiscount: 50.00
         ↓
-Service parses response → OrderCalculation
+Service extracts:
+  - OrderCalculation from response
+  - PromoDetails (if available)
+  - Smart discount amount from multiple sources
+        ↓
+Service returns: PromoValidationResult.valid(
+  message: 'Voucher applied!',
+  calculation: OrderCalculation,
+  promoDetails: PromoDetails
+)
         ↓
 Cubit emits: PromoValidationSuccess(
   message: "Promo code applied successfully",
-  discountAmount: 50.00
+  discountAmount: 50.00,
+  calculation: OrderCalculation
 )
         ↓
 Screen listens to state change via BlocBuilder
@@ -493,6 +650,8 @@ double get total => _apiCalculation?.total ??
     "product_id": 5,
     "promo_code": "BATTERIUNEWFD",
     "trade_in": 1,
+    "lead_reason": "battery_weak",
+    "order_type": "battery_replacement",
     "customer": {
       "name": "John Doe",
       "email": "john@example.com",
@@ -500,7 +659,9 @@ double get total => _apiCalculation?.total ??
     },
     "vehicle": {
       "plate_number": "ABC1234"
-    }
+    },
+    "address": "123 Street Name, City",
+    "notes": "Optional delivery notes"
   }
 }
 ```
@@ -515,6 +676,10 @@ double get total => _apiCalculation?.total ??
   "total_amount": 395.00
 }
 ```
+
+**NEW Parameters:**
+- `lead_reason` - Tracking reason for the order (from ServiceType)
+- `order_type` - Categorization of the order (from ServiceType)
 
 ### 3. Load Products
 
@@ -730,16 +895,18 @@ BlocBuilder<OrderConfirmationCubit, OrderConfirmationState>(
 
 ## ⚠️ Important Notes
 
-1. **Original Screen is 2,198 lines** - Very difficult to maintain and test
-2. **Refactored version separates concerns** - Better testability and maintainability
-3. **BLoC pattern ensures state consistency** - No local state conflicts
-4. **Service layer handles all API logic** - Easy to mock for testing
-5. **Product IDs can be String or int** - API accepts both formats (e.g., "astra-ns70l" or 5)
-6. **Trade-in discount is RM20 hardcoded** - Hardcoded on mobile, verified on server
-7. **Promo codes validated via API** - No client-side validation
-8. **Location is required** - Affects delivery fee calculation
-9. **All calculations are decimal** - Store as double, display with 2 decimal places
-10. **API responses use cents** - `final_amount_cents` field is in cents, divide by 100
+1. **Singleton Pattern** - Both `OrderConfirmationService` and `OrderService` use singleton pattern for consistent access
+2. **Product IDs can be String or int** - API accepts both formats (e.g., "astra-ns70l" or 5)
+3. **Smart Discount Resolution** - Service tries multiple sources for discount amount (parameter → calculation → promo_code object → discount field)
+4. **PromoDetails Extraction** - API responses can include detailed promo information (discount type, value, minimum amount)
+5. **Trade-in discount is RM20 hardcoded** - Hardcoded on mobile, verified on server
+6. **Promo codes validated via API** - No client-side validation, HTTP 200 indicates valid code
+7. **Location is required** - Affects delivery fee calculation and product eligibility
+8. **All calculations are decimal** - Store as double, display with 2 decimal places
+9. **Order Creation Parameters** - New `leadReason` and `orderType` parameters for better tracking
+10. **Enhanced Logging** - Extensive debug logging in promo validation for troubleshooting
+11. **State Contains Full Result** - `OrderCreationSuccess` contains complete `OrderCreationResult` object
+12. **API responses use cents** - `final_amount_cents` field is in cents, divide by 100
 
 ---
 
@@ -749,10 +916,11 @@ This architecture makes it easy to add:
 - **Different payment methods** - Just extend OrderCreationCubit
 - **Loyalty points integration** - Add to calculation API
 - **Subscription options** - New product type
-- **Advanced promo logic** - Multiple promo codes
+- **Advanced promo logic** - Multiple promo codes with stacking
 - **Order history** - New service layer
 - **Real-time price updates** - WebSocket integration
 - **Offline support** - Local caching layer
+- **Analytics tracking** - Use `leadReason` and `orderType` for insights
 
 ---
 
