@@ -42,7 +42,7 @@ xcrun altool --upload-app \
   --username adrin.zharif@bateriku.com \
   --password nmdh-yyaw-nsyy-ucjq
 
-  nmdh-yyaw-nsyy-ucjq
+nmdh-yyaw-nsyy-ucjq
 
 
 url: https://staging.jualbaterikereta.com/docs/internal/mobile/orders.en.html
